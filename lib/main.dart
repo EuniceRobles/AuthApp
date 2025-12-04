@@ -1,208 +1,88 @@
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+<?php
+header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Accept');
 
-void main() {
-  runApp(const MySQLAuthApp());
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
 }
 
-class MySQLAuthApp extends StatelessWidget {
-  const MySQLAuthApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'BB88 LOGIN AUTH',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color.fromRGBO(247, 139, 159, 1)),
-        useMaterial3: true,
-      ),
-      home: const AuthScreen(),
-    );
-  }
+if (!file_exists(__DIR__ . '/dbconfig.php')) {
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'DB config missing']);
+    exit;
+}
+include_once __DIR__ . '/dbconfig.php';
+if (!isset($conn) || !$conn) {
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'Database connection not available']);
+    exit;
 }
 
-class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
-  @override
-  State<AuthScreen> createState() => _AuthScreenState();
+$input = $_POST;
+if (empty($input)) {
+    $raw = file_get_contents('php://input');
+    $json = json_decode($raw, true);
+    if (is_array($json)) $input = $json;
 }
 
-class _AuthScreenState extends State<AuthScreen> {
-  final username = TextEditingController();
-  final pass = TextEditingController();
-  bool isWelcome = true;
-  bool loading = false;
+$username = isset($input['username']) ? trim($input['username']) : '';
+$password = isset($input['password']) ? $input['password'] : '';
 
-  Future<void> submit() async {
-    setState(() => loading = true);
-    final url = isWelcome
-        ? "http://localhost/flutterapi/getusers.php"
-        : "http://localhost/flutterapi/insertusers.php";
+if ($username === '' || $password === '') {
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'message' => 'Missing username or password']);
+    exit;
+}
 
-    final response = await http.post(
-      Uri.parse(url),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({
-        "username": username.text,
-        "password": pass.text,
-      }),
-    );
+if (strlen($password) < 8) {
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'message' => 'Password must be at least 8 characters']);
+    exit;
+}
 
-    final data = jsonDecode(response.body);
+$hashed = password_hash($password, PASSWORD_DEFAULT);
 
-    setState(() => loading = false);
-
-    if (data["status"] == "success") {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => Dashboard(username: username.text),
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(data["message"])),
-      );
+try {
+    $stmt = $conn->prepare("SELECT id FROM users WHERE username = ? LIMIT 1");
+    if ($stmt === false) throw new Exception('Prepare failed: ' . $conn->error);
+    $stmt->bind_param('s', $username);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    if ($res && $res->num_rows > 0) {
+        http_response_code(409);
+        echo json_encode(['status' => 'error', 'message' => 'User already exists']);
+        $stmt->close();
+        exit;
     }
-  }
+    $stmt->close();
 
-  @override
+    $stmt = $conn->prepare("INSERT INTO users (username, password) VALUES (?, ?)");
+    if ($stmt === false) throw new Exception('Prepare failed: ' . $conn->error);
+    $stmt->bind_param('ss', $username, $hashed);
+    $stmt->execute();
 
-  bool isObscured = true;
-
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          color: Color.fromRGBO(239, 235, 236, 1) //ggboss i really cant get the bg image to work ahhahahahahahahahahhaahh whyyyyyyyyyyyyyyyyyyyy
-        ),
-        child: Center(
-          child: Container(
-            width: 380,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(255, 255, 210, 210),
-              borderRadius: BorderRadius.circular(25),
-              boxShadow: const [
-                BoxShadow(
-                  blurRadius: 20,
-                )
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                  Text(
-                    isWelcome ? "Welcome!" : "Register now",
-                    key: ValueKey(isWelcome),
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: Color.fromRGBO(247, 139, 159, 1),
-                    ),
-                  ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: username,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.5),
-                    labelText: "Username",
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                TextField(
-                  controller: pass,
-                  obscureText: isObscured,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.5),
-                    labelText: "Password",
-                    suffixIcon: IconButton(
-                            icon: isObscured
-                                ? const Icon(Icons.visibility_off_outlined)
-                                : const Icon(Icons.visibility_outlined),
-                            onPressed: () {
-                              setState(() {
-                                isObscured = !isObscured;
-                              });
-                            },
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 25),
-                loading
-                    ? const CircularProgressIndicator(color: Color.fromRGBO(247, 139, 159, 1))
-                    : ElevatedButton(
-                        onPressed: submit,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color.fromRGBO(247, 139, 159, 1),
-                          foregroundColor: Colors.white,
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 60, vertical: 15),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Text(
-                          isWelcome ? "Login" : "Register",
-                          style: const TextStyle(fontSize: 18),
-                        ),
-                      ),
-                TextButton(
-                  onPressed: () => setState(() => isWelcome = !isWelcome),
-                  child: Text(
-                    isWelcome ? "Create new account" : "Already have an account?",
-                    style: const TextStyle(color: Color.fromRGBO(223, 90, 115, 1)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+    if ($stmt->affected_rows > 0) {
+        echo json_encode(['status' => 'success', 'message' => 'Registered successfully', 'id' => $stmt->insert_id]);
+    } else {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Registration failed']);
+    }
+    $stmt->close();
+} catch (mysqli_sql_exception $e) {
+    error_log('DB error: ' . $e->getMessage());
+    if ((int)$e->getCode() === 1062) {
+        http_response_code(409);
+        echo json_encode(['status' => 'error', 'message' => 'User already exists']);
+    } else {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Database error']);
+    }
+} catch (Exception $e) {
+    error_log('Server error: ' . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'Server error']);
 }
-
-class Dashboard extends StatelessWidget {
-  final String username;
-
-  const Dashboard({super.key, required this.username});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Dashboard"),
-        backgroundColor: const Color.fromRGBO(247, 139, 159, 1),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () {
-              Navigator.pop(context);
-            },
-          )
-        ],
-      ),
-      body: Center(
-        child: Text(
-          "Welcome $username 👋",
-          style: const TextStyle(
-            fontSize: 25,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
+?>
